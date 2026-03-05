@@ -39,11 +39,8 @@ if "%TRANSFORMERS_CACHE%"=="" set "TRANSFORMERS_CACHE=%MODEL_CACHE_DIR%"
 if "%GLM_MODEL_CACHE%"=="" set "GLM_MODEL_CACHE=%MODEL_CACHE_DIR%"
 if "%TORCH_CHANNEL%"=="" set "TORCH_CHANNEL=cu126"
 
-rem Offline mode: skip HF Hub network checks when model is already cached
-if exist "%MODEL_CACHE_DIR%\models--zai-org--GLM-OCR\snapshots" (
-    set "HF_HUB_OFFLINE=1"
-    echo [+] Model cache found. Running in offline mode.
-)
+rem Note: Do not force HF_HUB_OFFLINE here.
+rem Multiple model switching may require downloading a different model.
 
 rem Create venv if missing
 if not exist "%VENV_DIR%\Scripts\activate.bat" (

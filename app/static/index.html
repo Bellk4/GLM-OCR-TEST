@@ -882,6 +882,22 @@
 									<div class="group-grid">
 										<label>
 											<span class="label-title"
+												>model
+												<button
+													class="help-trigger"
+													type="button"
+													data-help="使用するHuggingFaceモデルIDです。サーバー設定で許可された候補から選択します。"
+													aria-label="modelの説明"
+												>
+													?
+												</button>
+											</span>
+											<select id="model_id" name="model_id">
+												<option value="zai-org/GLM-OCR" selected>zai-org/GLM-OCR</option>
+											</select>
+										</label>
+										<label>
+											<span class="label-title"
 												>device
 												<button
 													class="help-trigger"
@@ -919,6 +935,7 @@
 
 				<section class="panel">
 					<div class="result-head">
+						<span class="tag" id="resultModel">model: -</span>
 						<span class="tag" id="resultTask">task: -</span>
 						<span class="tag" id="resultLinebreak">linebreak: -</span>
 						<span class="tag" id="resultPages">pages: -</span>
@@ -967,11 +984,40 @@
 			const statusDevice = document.getElementById("statusDevice");
 			const statusCuda = document.getElementById("statusCuda");
 			const resultTask = document.getElementById("resultTask");
+			const resultModel = document.getElementById("resultModel");
 			const resultLinebreak = document.getElementById("resultLinebreak");
 			const resultPages = document.getElementById("resultPages");
 			const resultDevice = document.getElementById("resultDevice");
 			const resultLayout = document.getElementById("resultLayout");
 			const resultOrder = document.getElementById("resultOrder");
+			const modelInput = document.getElementById("model_id");
+
+			function populateModelOptions(models, selectedModel) {
+				if (!modelInput) {
+					return;
+				}
+				const currentValue = selectedModel || modelInput.value || "";
+				modelInput.innerHTML = "";
+				const normalized = Array.isArray(models) ? models : [];
+				if (normalized.length === 0 && currentValue) {
+					const fallbackOption = document.createElement("option");
+					fallbackOption.value = currentValue;
+					fallbackOption.textContent = currentValue;
+					modelInput.appendChild(fallbackOption);
+					modelInput.value = currentValue;
+					return;
+				}
+				normalized.forEach((item) => {
+					const option = document.createElement("option");
+					option.value = String(item);
+					option.textContent = String(item);
+					modelInput.appendChild(option);
+				});
+				const preferred = currentValue || normalized[0] || "";
+				if (preferred) {
+					modelInput.value = preferred;
+				}
+			}
 
 			let currentResults = [];
 			let progressPollTimer = null;
@@ -1412,6 +1458,7 @@
 					statusModel.textContent = `model: ${payload.model || "-"}`;
 					statusDevice.textContent = `device default: ${payload.device_default || "-"}`;
 					statusCuda.textContent = `cuda: ${String(payload.cuda_available)}`;
+					populateModelOptions(payload.models, payload.model || payload.model_default);
 					const cudaOption = document.querySelector('#device option[value="cuda"]');
 					if (cudaOption) {
 						cudaOption.disabled = !payload.cuda_available;
@@ -1435,6 +1482,7 @@
 				const requestId = createRequestId();
 				activeRequestId = requestId;
 				formData.append("file", fileInput.files[0]);
+				formData.append("model_id", modelInput.value);
 				formData.append("device", document.getElementById("device").value);
 				formData.append("dpi", document.getElementById("dpi").value);
 				formData.append("task", taskInput.value);
@@ -1457,6 +1505,7 @@
 				pagePickerWrap.classList.add("hidden");
 				resetCopyState();
 				currentResults = [];
+				resultModel.textContent = `model: ${modelInput.value || "-"}`;
 				resultTask.textContent = `task: ${taskInput.value}`;
 				resultLinebreak.textContent = `linebreak: ${document.getElementById("linebreak_mode").value}`;
 				resultPages.textContent = "pages: -";
@@ -1481,6 +1530,7 @@
 						readingOrder: payload.reading_order || "-",
 						layoutBackend: payload.layout_backend || "-",
 					};
+					resultModel.textContent = `model: ${payload.model || modelInput.value || "-"}`;
 					resultTask.textContent = `task: ${payload.task || "-"}`;
 					resultLinebreak.textContent = `linebreak: ${payload.linebreak_mode || "-"}`;
 					resultPages.textContent = `pages: ${payload.page_count || 0}`;

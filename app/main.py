@@ -33,6 +33,19 @@ MODEL_CACHE_DIR = Path(
 )
 
 
+def parse_model_ids() -> list[str]:
+    raw = os.getenv("GLM_MODEL_IDS", "")
+    candidates = [item.strip() for item in re.split(r"[,;\n]", raw) if item.strip()]
+    ordered: list[str] = []
+    for item in [MODEL_ID, *candidates]:
+        if item not in ordered:
+            ordered.append(item)
+    return ordered
+
+
+AVAILABLE_MODEL_IDS = parse_model_ids()
+
+
 def _snapshot_has_model_files(snapshot_dir: Path) -> bool:
     if not snapshot_dir.is_dir():
         return False
@@ -47,8 +60,8 @@ def _snapshot_has_model_files(snapshot_dir: Path) -> bool:
     return False
 
 
-def _has_valid_local_snapshot() -> bool:
-    snapshots_dir = MODEL_CACHE_DIR / ("models--" + MODEL_ID.replace("/", "--")) / "snapshots"
+def _has_valid_local_snapshot(model_id: str) -> bool:
+    snapshots_dir = MODEL_CACHE_DIR / ("models--" + model_id.replace("/", "--")) / "snapshots"
     if not snapshots_dir.is_dir():
         return False
     for candidate in snapshots_dir.iterdir():
@@ -60,11 +73,19 @@ def _has_valid_local_snapshot() -> bool:
             return True
     return False
 
-# Auto-detect offline mode: if the model snapshot is already cached,
-# disable all HF Hub network checks regardless of how the server was launched.
-if _has_valid_local_snapshot():
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+
+def normalize_model_id(model_id: Optional[str]) -> str:
+    selected = (model_id or "").strip() or MODEL_ID
+    if selected not in AVAILABLE_MODEL_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported model_id: "
+                f"{selected}. Available: {', '.join(AVAILABLE_MODEL_IDS)}"
+            ),
+        )
+    return selected
 DEFAULT_DPI = 220
 DEFAULT_MAX_NEW_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
@@ -103,14 +124,14 @@ def patch_transformers_video_auto_none_bug() -> None:
         logger.warning("Applied transformers video auto patch for %d entries", fixed)
 
 
-def resolve_model_path() -> tuple[str, bool]:
+def resolve_model_path(model_id: str) -> tuple[str, bool]:
     """Return (path, is_local).
 
     If the model snapshot is already cached locally, return the direct
     snapshot directory path and True so callers can skip the Hub entirely.
     Otherwise return MODEL_ID and False so the Hub is used normally.
     """
-    snapshots_dir = MODEL_CACHE_DIR / ("models--" + MODEL_ID.replace("/", "--")) / "snapshots"
+    snapshots_dir = MODEL_CACHE_DIR / ("models--" + model_id.replace("/", "--")) / "snapshots"
     if snapshots_dir.is_dir():
         candidates = sorted(
             (
@@ -125,7 +146,7 @@ def resolve_model_path() -> tuple[str, bool]:
         )
         if candidates:
             return str(candidates[0]), True
-    return MODEL_ID, False
+    return model_id, False
 
 
 def resolve_device(device: str) -> str:
@@ -147,10 +168,11 @@ class GlmRuntime:
         self.processor: Optional[AutoProcessor] = None
         self.model: Optional[AutoModelForImageTextToText] = None
         self.current_device: Optional[str] = None
+        self.current_model_id: Optional[str] = None
         self._load_lock = asyncio.Lock()
 
-    def _load_model(self, device: str) -> AutoModelForImageTextToText:
-        model_path, local = resolve_model_path()
+    def _load_model(self, device: str, model_id: str) -> AutoModelForImageTextToText:
+        model_path, local = resolve_model_path(model_id)
         extra: dict[str, Any] = {"local_files_only": local}
         if not local:
             extra["cache_dir"] = str(MODEL_CACHE_DIR)
@@ -184,12 +206,13 @@ class GlmRuntime:
         )
         return model.to("cpu")
 
-    async def ensure_loaded(self, device: str) -> None:
+    async def ensure_loaded(self, device: str, model_id: Optional[str] = None) -> None:
+        selected_model_id = normalize_model_id(model_id)
         async with self._load_lock:
-            if self.processor is None:
-                logger.info("Loading processor: %s", MODEL_ID)
+            if self.processor is None or self.current_model_id != selected_model_id:
+                logger.info("Loading processor: %s", selected_model_id)
                 patch_transformers_video_auto_none_bug()
-                model_path, local = resolve_model_path()
+                model_path, local = resolve_model_path(selected_model_id)
                 proc_extra: dict[str, Any] = {"local_files_only": local}
                 if not local:
                     proc_extra["cache_dir"] = str(MODEL_CACHE_DIR)
@@ -215,21 +238,31 @@ class GlmRuntime:
                         **proc_extra,
                     )
 
-            if self.model is not None and self.current_device == device:
+            if (
+                self.model is not None
+                and self.current_device == device
+                and self.current_model_id == selected_model_id
+            ):
                 return
 
             if self.model is not None:
                 logger.info(
-                    "Switching model device from %s to %s", self.current_device, device
+                    "Switching runtime from model=%s device=%s to model=%s device=%s",
+                    self.current_model_id,
+                    self.current_device,
+                    selected_model_id,
+                    device,
                 )
                 del self.model
                 self.model = None
+                self.processor = None
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-            logger.info("Loading model: %s (device=%s)", MODEL_ID, device)
-            self.model = await asyncio.to_thread(self._load_model, device)
+            logger.info("Loading model: %s (device=%s)", selected_model_id, device)
+            self.model = await asyncio.to_thread(self._load_model, device, selected_model_id)
             self.current_device = device
+            self.current_model_id = selected_model_id
 
     def get(self) -> tuple[AutoProcessor, AutoModelForImageTextToText, str]:
         if self.processor is None or self.model is None or self.current_device is None:
@@ -756,7 +789,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 async def startup_load_model() -> None:
     MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     default_device = resolve_device("auto")
-    await RUNTIME.ensure_loaded(default_device)
+    await RUNTIME.ensure_loaded(default_device, MODEL_ID)
     logger.info(
         "Startup complete (device=%s, cache_dir=%s)",
         default_device,
@@ -780,7 +813,9 @@ async def status() -> dict[str, Any]:
     return {
         "cuda_available": torch.cuda.is_available(),
         "device_default": "cuda" if torch.cuda.is_available() else "cpu",
-        "model": MODEL_ID,
+        "model": RUNTIME.current_model_id or MODEL_ID,
+        "model_default": MODEL_ID,
+        "models": AVAILABLE_MODEL_IDS,
         "model_cache_dir": str(MODEL_CACHE_DIR),
     }
 
@@ -801,7 +836,8 @@ async def cancel(request_id: str) -> dict[str, Any]:
 @app.post("/api/analyze")
 async def analyze(
     file: UploadFile = File(...),
-    # device: str = Form("auto"),
+    device: str = Form("auto"),
+    model_id: Optional[str] = Form(None),
     dpi: int = Form(DEFAULT_DPI),
     task: str = Form("text"),
     linebreak_mode: str = Form("none"),
@@ -821,6 +857,7 @@ async def analyze(
     set_progress(request_id, "preprocessing", "事前処理中", 0, 0)
 
     normalized_task = (task or "text").strip().lower()
+    normalized_model_id = normalize_model_id(model_id)
     if normalized_task not in ALLOWED_TASKS:
         set_progress(request_id, "error", f"Unsupported task: {task}", 0, 0)
         raise HTTPException(status_code=400, detail=f"Unsupported task: {task}")
@@ -875,8 +912,8 @@ async def analyze(
 
     try:
         prompt = build_prompt(normalized_task, schema)
-        resolved_device = resolve_device("auto")
-        await RUNTIME.ensure_loaded(resolved_device)
+        resolved_device = resolve_device(device)
+        await RUNTIME.ensure_loaded(resolved_device, normalized_model_id)
         processor, model, actual_device = RUNTIME.get()
     except HTTPException as exc:
         clear_cancel_request(request_id)
@@ -918,6 +955,7 @@ async def analyze(
         return {
             "request_id": request_id,
             "device": actual_device,
+            "model": normalized_model_id,
             "task": normalized_task,
             "linebreak_mode": normalized_linebreak_mode,
             "use_layout": use_layout_mode,
