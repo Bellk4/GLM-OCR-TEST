@@ -10,8 +10,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
-MODEL_CACHE_DIR="$SCRIPT_DIR/models/hf_cache"
-HF_HOME_DIR="$SCRIPT_DIR/models/hf_home"
 ENV_FILE="$SCRIPT_DIR/.env"
 
 if command -v python3 >/dev/null 2>&1; then
@@ -31,11 +29,19 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
+# Resolve model/cache dirs from .env when provided.
+MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${GLM_MODEL_CACHE:-$SCRIPT_DIR/models/hf_cache}}"
+HF_HOME_DIR="${HF_HOME:-$SCRIPT_DIR/models/hf_home}"
+
+# Make relative paths in .env behave consistently from project root.
+[[ "$MODEL_CACHE_DIR" != /* ]] && MODEL_CACHE_DIR="$SCRIPT_DIR/$MODEL_CACHE_DIR"
+[[ "$HF_HOME_DIR" != /* ]] && HF_HOME_DIR="$SCRIPT_DIR/$HF_HOME_DIR"
+
 mkdir -p "$MODEL_CACHE_DIR" "$HF_HOME_DIR"
-export HF_HOME="$HF_HOME_DIR"
-export HF_HUB_CACHE="$MODEL_CACHE_DIR"
-export TRANSFORMERS_CACHE="$MODEL_CACHE_DIR"
-export GLM_MODEL_CACHE="$MODEL_CACHE_DIR"
+export HF_HOME="${HF_HOME:-$HF_HOME_DIR}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$MODEL_CACHE_DIR}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$MODEL_CACHE_DIR}"
+export GLM_MODEL_CACHE="${GLM_MODEL_CACHE:-$MODEL_CACHE_DIR}"
 
 if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
   echo "[+] Creating virtual environment at $VENV_DIR ..."

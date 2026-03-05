@@ -26,11 +26,45 @@ from transformers import (
 
 from app.layout_ppdoclayoutv3 import LayoutBlock, detect_layout_blocks
 
-MODEL_ID = "zai-org/GLM-OCR"
+MODEL_ID = os.getenv("GLM_MODEL_ID", "zai-org/GLM-OCR")
 ROOT_DIR = Path(__file__).resolve().parents[1]
 MODEL_CACHE_DIR = Path(
     os.getenv("GLM_MODEL_CACHE", str(ROOT_DIR / "models" / "hf_cache"))
 )
+
+
+def _snapshot_has_model_files(snapshot_dir: Path) -> bool:
+    if not snapshot_dir.is_dir():
+        return False
+    if (snapshot_dir / "model.safetensors").exists() or (
+        snapshot_dir / "pytorch_model.bin"
+    ).exists():
+        return True
+    if (snapshot_dir / "model.safetensors.index.json").exists():
+        return any(snapshot_dir.glob("model-*.safetensors"))
+    if (snapshot_dir / "pytorch_model.bin.index.json").exists():
+        return any(snapshot_dir.glob("pytorch_model-*.bin"))
+    return False
+
+
+def _has_valid_local_snapshot() -> bool:
+    snapshots_dir = MODEL_CACHE_DIR / ("models--" + MODEL_ID.replace("/", "--")) / "snapshots"
+    if not snapshots_dir.is_dir():
+        return False
+    for candidate in snapshots_dir.iterdir():
+        if (
+            candidate.is_dir()
+            and (candidate / "config.json").exists()
+            and _snapshot_has_model_files(candidate)
+        ):
+            return True
+    return False
+
+# Auto-detect offline mode: if the model snapshot is already cached,
+# disable all HF Hub network checks regardless of how the server was launched.
+if _has_valid_local_snapshot():
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 DEFAULT_DPI = 220
 DEFAULT_MAX_NEW_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
@@ -69,6 +103,31 @@ def patch_transformers_video_auto_none_bug() -> None:
         logger.warning("Applied transformers video auto patch for %d entries", fixed)
 
 
+def resolve_model_path() -> tuple[str, bool]:
+    """Return (path, is_local).
+
+    If the model snapshot is already cached locally, return the direct
+    snapshot directory path and True so callers can skip the Hub entirely.
+    Otherwise return MODEL_ID and False so the Hub is used normally.
+    """
+    snapshots_dir = MODEL_CACHE_DIR / ("models--" + MODEL_ID.replace("/", "--")) / "snapshots"
+    if snapshots_dir.is_dir():
+        candidates = sorted(
+            (
+                p
+                for p in snapshots_dir.iterdir()
+                if p.is_dir()
+                and (p / "config.json").exists()
+                and _snapshot_has_model_files(p)
+            ),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            return str(candidates[0]), True
+    return MODEL_ID, False
+
+
 def resolve_device(device: str) -> str:
     requested = (device or "auto").lower()
     if requested == "auto":
@@ -91,13 +150,17 @@ class GlmRuntime:
         self._load_lock = asyncio.Lock()
 
     def _load_model(self, device: str) -> AutoModelForImageTextToText:
+        model_path, local = resolve_model_path()
+        extra: dict[str, Any] = {"local_files_only": local}
+        if not local:
+            extra["cache_dir"] = str(MODEL_CACHE_DIR)
         if device == "cuda":
             try:
                 return AutoModelForImageTextToText.from_pretrained(
-                    MODEL_ID,
-                    cache_dir=str(MODEL_CACHE_DIR),
+                    model_path,
                     torch_dtype="auto",
                     device_map="auto",
+                    **extra,
                 )
             except ValueError as exc:
                 if "requires `accelerate`" not in str(exc):
@@ -106,18 +169,18 @@ class GlmRuntime:
                     "accelerate is missing. Falling back to CUDA load without device_map."
                 )
                 model = AutoModelForImageTextToText.from_pretrained(
-                    MODEL_ID,
-                    cache_dir=str(MODEL_CACHE_DIR),
+                    model_path,
                     torch_dtype="auto",
                     device_map=None,
+                    **extra,
                 )
                 return model.to("cuda")
 
         model = AutoModelForImageTextToText.from_pretrained(
-            MODEL_ID,
-            cache_dir=str(MODEL_CACHE_DIR),
+            model_path,
             torch_dtype=torch.float32,
             device_map=None,
+            **extra,
         )
         return model.to("cpu")
 
@@ -126,10 +189,14 @@ class GlmRuntime:
             if self.processor is None:
                 logger.info("Loading processor: %s", MODEL_ID)
                 patch_transformers_video_auto_none_bug()
+                model_path, local = resolve_model_path()
+                proc_extra: dict[str, Any] = {"local_files_only": local}
+                if not local:
+                    proc_extra["cache_dir"] = str(MODEL_CACHE_DIR)
                 try:
                     self.processor = AutoProcessor.from_pretrained(
-                        MODEL_ID,
-                        cache_dir=str(MODEL_CACHE_DIR),
+                        model_path,
+                        **proc_extra,
                     )
                 except ImportError as exc:
                     if "Torchvision library" in str(exc):
@@ -144,8 +211,8 @@ class GlmRuntime:
                     # Retry once after forcing the compatibility patch.
                     patch_transformers_video_auto_none_bug()
                     self.processor = AutoProcessor.from_pretrained(
-                        MODEL_ID,
-                        cache_dir=str(MODEL_CACHE_DIR),
+                        model_path,
+                        **proc_extra,
                     )
 
             if self.model is not None and self.current_device == device:
@@ -734,7 +801,7 @@ async def cancel(request_id: str) -> dict[str, Any]:
 @app.post("/api/analyze")
 async def analyze(
     file: UploadFile = File(...),
-    device: str = Form("auto"),
+    # device: str = Form("auto"),
     dpi: int = Form(DEFAULT_DPI),
     task: str = Form("text"),
     linebreak_mode: str = Form("none"),
@@ -808,7 +875,7 @@ async def analyze(
 
     try:
         prompt = build_prompt(normalized_task, schema)
-        resolved_device = resolve_device(device)
+        resolved_device = resolve_device("auto")
         await RUNTIME.ensure_loaded(resolved_device)
         processor, model, actual_device = RUNTIME.get()
     except HTTPException as exc:

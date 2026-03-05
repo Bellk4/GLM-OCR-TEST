@@ -13,7 +13,6 @@ set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "VENV_DIR=%SCRIPT_DIR%\.venv"
 set "STAMP_FILE=%VENV_DIR%\.deps_ok"
-set "MODEL_CACHE_DIR=%SCRIPT_DIR%\models\hf_cache"
 set "ENV_FILE=%SCRIPT_DIR%\.env"
 
 if exist "%ENV_FILE%" (
@@ -25,12 +24,19 @@ if exist "%ENV_FILE%" (
     )
 )
 
+rem Resolve model/cache directory from .env when provided.
+if "%MODEL_CACHE_DIR%"=="" if not "%GLM_MODEL_CACHE%"=="" set "MODEL_CACHE_DIR=%GLM_MODEL_CACHE%"
+if "%MODEL_CACHE_DIR%"=="" set "MODEL_CACHE_DIR=%SCRIPT_DIR%\models\hf_cache"
+
+rem Make relative paths in .env behave consistently from project root.
+if not "%MODEL_CACHE_DIR:~1,1%"==":" if not "%MODEL_CACHE_DIR:~0,2%"=="\\" if not "%MODEL_CACHE_DIR:~0,1%"=="/" set "MODEL_CACHE_DIR=%SCRIPT_DIR%\%MODEL_CACHE_DIR%"
+
 if not exist "%MODEL_CACHE_DIR%" mkdir "%MODEL_CACHE_DIR%"
 
-set "HF_HOME=%SCRIPT_DIR%\models\hf_home"
-set "HF_HUB_CACHE=%MODEL_CACHE_DIR%"
-set "TRANSFORMERS_CACHE=%MODEL_CACHE_DIR%"
-set "GLM_MODEL_CACHE=%MODEL_CACHE_DIR%"
+if "%HF_HOME%"=="" set "HF_HOME=%SCRIPT_DIR%\models\hf_home"
+if "%HF_HUB_CACHE%"=="" set "HF_HUB_CACHE=%MODEL_CACHE_DIR%"
+if "%TRANSFORMERS_CACHE%"=="" set "TRANSFORMERS_CACHE=%MODEL_CACHE_DIR%"
+if "%GLM_MODEL_CACHE%"=="" set "GLM_MODEL_CACHE=%MODEL_CACHE_DIR%"
 if "%TORCH_CHANNEL%"=="" set "TORCH_CHANNEL=cu126"
 
 rem Offline mode: skip HF Hub network checks when model is already cached
