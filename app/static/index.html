@@ -661,6 +661,24 @@
 										placeholder='{"type":"object","properties":{"name":{"type":"string"}}}'
 									></textarea>
 								</label>
+								<label class="span-2">
+									<span class="label-title"
+										>追加指示 (任意)
+										<button
+											class="help-trigger"
+											type="button"
+											data-help="モデルへの補足指示です。例: このPDFは設計図です。寸法・部品名を優先して抽出してください。"
+											aria-label="追加指示の説明"
+										>
+											?
+										</button>
+									</span>
+									<textarea
+										id="instruction"
+										name="instruction"
+										placeholder="例: このPDFは設計図です。図面番号・寸法・部材名を優先して読み取ってください。"
+									></textarea>
+								</label>
 							</div>
 						</fieldset>
 
@@ -970,6 +988,7 @@
 				const taskInput = document.getElementById("task");
 			const schemaWrap = document.getElementById("schemaWrap");
 			const schemaInput = document.getElementById("schema");
+			const instructionInput = document.getElementById("instruction");
 			const useLayoutInput = document.getElementById("use_layout");
 			const layoutBackendInput = document.getElementById("layout_backend");
 			const readingOrderInput = document.getElementById("reading_order");
@@ -1487,6 +1506,7 @@
 				formData.append("dpi", document.getElementById("dpi").value);
 				formData.append("task", taskInput.value);
 				formData.append("linebreak_mode", document.getElementById("linebreak_mode").value);
+				formData.append("instruction", instructionInput.value);
 				formData.append("max_new_tokens", document.getElementById("max_new_tokens").value);
 				formData.append("temperature", document.getElementById("temperature").value);
 				formData.append("use_layout", useLayoutInput.value);

@@ -86,6 +86,14 @@ def normalize_model_id(model_id: Optional[str]) -> str:
             ),
         )
     return selected
+
+
+DEFAULT_INSTRUCTION = os.getenv(
+    "GLM_DEFAULT_INSTRUCTION",
+    "このPDFは機械設計図です。型番・部品名は半角カナを優先し、記号を保持して読み取ってください。",
+)
+
+
 DEFAULT_DPI = 220
 DEFAULT_MAX_NEW_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
@@ -322,22 +330,29 @@ def save_temp_png(image: Image.Image) -> Path:
     return Path(tmp_path)
 
 
-def build_prompt(task: str, schema: Optional[str]) -> str:
+def build_prompt(task: str, schema: Optional[str], instruction: Optional[str] = None) -> str:
+    base_prompt: str
     if task == "text":
-        return "Text Recognition:"
-    if task == "table":
-        return "Table Recognition:"
-    if task == "formula":
-        return "Formula Recognition:"
-    if task == "extract_json":
+        base_prompt = "Text Recognition:"
+    elif task == "table":
+        base_prompt = "Table Recognition:"
+    elif task == "formula":
+        base_prompt = "Formula Recognition:"
+    elif task == "extract_json":
         if not schema:
             raise HTTPException(
                 status_code=400,
                 detail="schema is required when task=extract_json",
             )
         # Align with the prompt style in the official model card.
-        return f"请按下列JSON格式输出图中信息:\n{schema}"
-    raise HTTPException(status_code=400, detail=f"Unsupported task: {task}")
+        base_prompt = f"画像内の情報を以下のJSON形式に従って出力してください。\n{schema}"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported task: {task}")
+
+    extra = (instruction or "").strip()
+    if not extra:
+        return base_prompt
+    return f"{base_prompt}\n\nAdditional instruction:\n{extra}"
 
 
 def is_cjk_char(ch: str) -> bool:
@@ -574,15 +589,20 @@ def sort_layout_blocks(blocks: list[LayoutBlock], reading_order: str) -> list[La
     return sort_blocks_ltr_or_rtl(blocks, rtl=False)
 
 
-def block_prompt_for_task(global_task: str, block_type: str, schema: Optional[str]) -> str:
+def block_prompt_for_task(
+    global_task: str,
+    block_type: str,
+    schema: Optional[str],
+    instruction: Optional[str],
+) -> str:
     if global_task != "text":
-        return build_prompt(global_task, schema)
+        return build_prompt(global_task, schema, instruction)
     normalized_type = normalize_layout_label(block_type)
     if normalized_type == "table":
-        return build_prompt("table", None)
+        return build_prompt("table", None, instruction)
     if normalized_type == "formula":
-        return build_prompt("formula", None)
-    return build_prompt("text", None)
+        return build_prompt("formula", None, instruction)
+    return build_prompt("text", None, instruction)
 
 
 def combine_block_texts(blocks: list[dict[str, Any]], linebreak_mode: str) -> str:
@@ -842,6 +862,7 @@ async def analyze(
     task: str = Form("text"),
     linebreak_mode: str = Form("none"),
     schema: Optional[str] = Form(None),
+    instruction: Optional[str] = Form(None),
     max_new_tokens: int = Form(DEFAULT_MAX_NEW_TOKENS),
     temperature: float = Form(DEFAULT_TEMPERATURE),
     use_layout: bool = Form(DEFAULT_USE_LAYOUT),
@@ -857,6 +878,7 @@ async def analyze(
     set_progress(request_id, "preprocessing", "事前処理中", 0, 0)
 
     normalized_task = (task or "text").strip().lower()
+    effective_instruction = (instruction or "").strip() or DEFAULT_INSTRUCTION
     normalized_model_id = normalize_model_id(model_id)
     if normalized_task not in ALLOWED_TASKS:
         set_progress(request_id, "error", f"Unsupported task: {task}", 0, 0)
@@ -911,7 +933,7 @@ async def analyze(
     use_layout_mode = bool(use_layout)
 
     try:
-        prompt = build_prompt(normalized_task, schema)
+        prompt = build_prompt(normalized_task, schema, effective_instruction)
         resolved_device = resolve_device(device)
         await RUNTIME.ensure_loaded(resolved_device, normalized_model_id)
         processor, model, actual_device = RUNTIME.get()
@@ -1114,6 +1136,7 @@ async def analyze(
                         normalized_task,
                         layout_block.type,
                         schema,
+                        effective_instruction,
                     )
                     async with region_semaphore:
                         raw_text, clean_text, truncated = await asyncio.to_thread(
