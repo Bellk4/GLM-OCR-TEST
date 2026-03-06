@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -84,7 +85,8 @@ def _read_input_file(input_data: dict[str, Any]) -> tuple[bytes, str]:
 
     if isinstance(file_value, dict):
         encoded = str(file_value.get("base64") or file_value.get("data") or "")
-        filename = str(file_value.get("filename") or input_data.get("filename") or "upload.pdf")
+        filename = str(file_value.get("filename")
+                       or input_data.get("filename") or "upload.pdf")
         return _decode_base64_payload(encoded), filename
 
     raise ValueError("Missing file input. Use file_base64 or file(base64).")
@@ -98,32 +100,40 @@ async def _run_ocr(input_data: dict[str, Any]) -> dict[str, Any]:
     if task not in ALLOWED_TASKS:
         raise ValueError(f"Unsupported task: {task}")
 
-    linebreak_mode = str(input_data.get("linebreak_mode") or "none").strip().lower()
+    linebreak_mode = str(input_data.get("linebreak_mode")
+                         or "none").strip().lower()
     if linebreak_mode not in ALLOWED_LINEBREAK_MODES:
         raise ValueError(f"Unsupported linebreak_mode: {linebreak_mode}")
 
     schema_raw = input_data.get("schema")
     schema = None if schema_raw is None else str(schema_raw)
 
-    instruction = str(input_data.get("instruction") or "").strip() or DEFAULT_INSTRUCTION
+    instruction = str(input_data.get("instruction")
+                      or "").strip() or DEFAULT_INSTRUCTION
 
-    layout_backend = str(input_data.get("layout_backend") or DEFAULT_LAYOUT_BACKEND).strip().lower()
+    layout_backend = str(input_data.get("layout_backend")
+                         or DEFAULT_LAYOUT_BACKEND).strip().lower()
     if layout_backend not in ALLOWED_LAYOUT_BACKENDS:
         raise ValueError(f"Unsupported layout_backend: {layout_backend}")
 
-    reading_order = str(input_data.get("reading_order") or DEFAULT_READING_ORDER).strip().lower()
+    reading_order = str(input_data.get("reading_order")
+                        or DEFAULT_READING_ORDER).strip().lower()
     if reading_order not in ALLOWED_READING_ORDERS:
         raise ValueError(f"Unsupported reading_order: {reading_order}")
 
     dpi = max(36, min(600, int(input_data.get("dpi") or DEFAULT_DPI)))
-    max_new_tokens = max(1, min(32768, int(input_data.get("max_new_tokens") or DEFAULT_MAX_NEW_TOKENS)))
+    max_new_tokens = max(
+        1, min(32768, int(input_data.get("max_new_tokens") or DEFAULT_MAX_NEW_TOKENS)))
     temperature = float(input_data.get("temperature") or DEFAULT_TEMPERATURE)
     use_layout = _coerce_bool(input_data.get("use_layout"), DEFAULT_USE_LAYOUT)
-    region_padding = max(0, min(256, int(input_data.get("region_padding") or DEFAULT_REGION_PADDING)))
-    max_regions = max(1, min(1000, int(input_data.get("max_regions") or DEFAULT_MAX_REGIONS)))
+    region_padding = max(
+        0, min(256, int(input_data.get("region_padding") or DEFAULT_REGION_PADDING)))
+    max_regions = max(
+        1, min(1000, int(input_data.get("max_regions") or DEFAULT_MAX_REGIONS)))
     region_parallelism = max(
         1,
-        min(8, int(input_data.get("region_parallelism") or DEFAULT_REGION_PARALLELISM)),
+        min(8, int(input_data.get("region_parallelism")
+            or DEFAULT_REGION_PARALLELISM)),
     )
 
     prompt = build_prompt(task, schema, instruction)
@@ -192,15 +202,20 @@ async def _run_ocr(input_data: dict[str, Any]) -> dict[str, Any]:
         ]
         if not padded_blocks:
             width, height = page.size
-            padded_blocks = [LayoutBlock(type="text", bbox=(0, 0, width, height), score=1.0)]
+            padded_blocks = [LayoutBlock(
+                type="text", bbox=(0, 0, width, height), score=1.0)]
 
-        effective_order = resolve_effective_reading_order(padded_blocks, reading_order)
-        ordered_blocks = sort_layout_blocks(padded_blocks, effective_order)[:max_regions]
+        effective_order = resolve_effective_reading_order(
+            padded_blocks, reading_order)
+        ordered_blocks = sort_layout_blocks(
+            padded_blocks, effective_order)[:max_regions]
         if not ordered_blocks:
             width, height = page.size
-            ordered_blocks = [LayoutBlock(type="text", bbox=(0, 0, width, height), score=1.0)]
+            ordered_blocks = [LayoutBlock(
+                type="text", bbox=(0, 0, width, height), score=1.0)]
 
-        block_results: list[Optional[dict[str, Any]]] = [None] * len(ordered_blocks)
+        block_results: list[Optional[dict[str, Any]]] = [
+            None] * len(ordered_blocks)
         region_semaphore = asyncio.Semaphore(region_parallelism)
 
         async def infer_region(region_index: int, layout_block: LayoutBlock) -> tuple[int, dict[str, Any]]:
@@ -215,7 +230,8 @@ async def _run_ocr(input_data: dict[str, Any]) -> dict[str, Any]:
             crop = page.crop(layout_block.bbox)
             crop_path = save_temp_png(crop)
             try:
-                region_prompt = block_prompt_for_task(task, layout_block.type, schema, instruction)
+                region_prompt = block_prompt_for_task(
+                    task, layout_block.type, schema, instruction)
                 async with region_semaphore:
                     raw_text, clean_text, truncated = await asyncio.to_thread(
                         glm_infer,
@@ -276,7 +292,8 @@ async def _run_ocr(input_data: dict[str, Any]) -> dict[str, Any]:
                 page_item["json"] = json.loads(combined_text)
             except Exception as exc:
                 page_item["error"] = (
-                    f"{page_item.get('error', '')}\nJSON parse failed: {exc}".strip()
+                    f"{page_item.get('error', '')}\nJSON parse failed: {exc}".strip(
+                    )
                 )
         results.append(page_item)
 
@@ -301,7 +318,33 @@ async def _run_ocr(input_data: dict[str, Any]) -> dict[str, Any]:
 def handler(job: dict[str, Any]) -> dict[str, Any]:
     try:
         input_data = dict(job.get("input") or {})
-        return asyncio.run(_run_ocr(input_data))
+
+        try:
+            asyncio.get_running_loop()
+            has_running_loop = True
+        except RuntimeError:
+            has_running_loop = False
+
+        if not has_running_loop:
+            return asyncio.run(_run_ocr(input_data))
+
+        # Run in a dedicated thread when the current thread already has an event loop.
+        result_holder: dict[str, dict[str, Any]] = {}
+        error_holder: dict[str, Exception] = {}
+
+        def _runner() -> None:
+            try:
+                result_holder["value"] = asyncio.run(_run_ocr(input_data))
+            except Exception as exc:  # pragma: no cover - passthrough
+                error_holder["error"] = exc
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join()
+
+        if "error" in error_holder:
+            raise error_holder["error"]
+        return result_holder.get("value", {"state": "error", "error": "unknown error"})
     except Exception as exc:
         return {"state": "error", "error": str(exc)}
 

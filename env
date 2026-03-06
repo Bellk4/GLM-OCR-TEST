@@ -1,0 +1,14 @@
+# Local Windows path
+MODEL_CACHE_DIR=O:\source\Python\GLM-OCR-TEST\models\hf_cache
+HF_HOME=O:\source\Python\GLM-OCR-TEST\models\hf_home
+
+# Multi-model configuration
+GLM_MODEL_ID=zai-org/GLM-OCR
+# Comma-separated model IDs shown in UI selector.
+GLM_MODEL_IDS=zai-org/GLM-OCR
+
+# # Multi-model configuration
+# GLM_MODEL_ID=Qwen/Qwen2.5-VL-72B-Instruct
+# # Comma-separated model IDs shown in UI selector.
+# GLM_MODEL_IDS=Qwen/Qwen2.5-VL-72B-Instruct,zai-org/GLM-OCR
+

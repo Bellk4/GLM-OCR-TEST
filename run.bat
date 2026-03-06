@@ -13,22 +13,42 @@ set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "VENV_DIR=%SCRIPT_DIR%\.venv"
 set "STAMP_FILE=%VENV_DIR%\.deps_ok"
-set "ENV_FILE=%SCRIPT_DIR%\.env"
+set "ENV_FILE_DOT=%SCRIPT_DIR%\.env"
+set "ENV_FILE_PLAIN=%SCRIPT_DIR%\env"
 
-if exist "%ENV_FILE%" (
-    echo [+] Loading .env from "%ENV_FILE%"
+rem Allow explicit env file path override via ENV_FILE.
+if "%ENV_FILE%"=="" (
+    if exist "%ENV_FILE_PLAIN%" (
+        set "ENV_FILE=%ENV_FILE_PLAIN%"
+    ) else if exist "%ENV_FILE_DOT%" (
+        set "ENV_FILE=%ENV_FILE_DOT%"
+    )
+)
+
+rem Optional argument: --torch-channel=<cpu|cu118|cu121|cu126...>
+set "CLI_TORCH_CHANNEL="
+for %%I in (%*) do (
+    set "ARG=%%~I"
+    call :parse_arg
+)
+
+if not "%ENV_FILE%"=="" if exist "%ENV_FILE%" (
+    echo [+] Loading env from "%ENV_FILE%"
     for /f "usebackq eol=# tokens=1* delims==" %%A in ("%ENV_FILE%") do (
         if not "%%A"=="" if not "%%A"=="." (
             set "%%A=%%B"
         )
     )
 )
+if "%ENV_FILE%"=="" (
+    echo [!] No env file found. Expected "%ENV_FILE_PLAIN%" or "%ENV_FILE_DOT%".
+)
 
-rem Resolve model/cache directory from .env when provided.
+rem Resolve model/cache directory from env when provided.
 if "%MODEL_CACHE_DIR%"=="" if not "%GLM_MODEL_CACHE%"=="" set "MODEL_CACHE_DIR=%GLM_MODEL_CACHE%"
 if "%MODEL_CACHE_DIR%"=="" set "MODEL_CACHE_DIR=%SCRIPT_DIR%\models\hf_cache"
 
-rem Make relative paths in .env behave consistently from project root.
+rem Make relative paths in env behave consistently from project root.
 if not "%MODEL_CACHE_DIR:~1,1%"==":" if not "%MODEL_CACHE_DIR:~0,2%"=="\\" if not "%MODEL_CACHE_DIR:~0,1%"=="/" set "MODEL_CACHE_DIR=%SCRIPT_DIR%\%MODEL_CACHE_DIR%"
 
 if not exist "%MODEL_CACHE_DIR%" mkdir "%MODEL_CACHE_DIR%"
@@ -37,7 +57,9 @@ if "%HF_HOME%"=="" set "HF_HOME=%SCRIPT_DIR%\models\hf_home"
 if "%HF_HUB_CACHE%"=="" set "HF_HUB_CACHE=%MODEL_CACHE_DIR%"
 if "%TRANSFORMERS_CACHE%"=="" set "TRANSFORMERS_CACHE=%MODEL_CACHE_DIR%"
 if "%GLM_MODEL_CACHE%"=="" set "GLM_MODEL_CACHE=%MODEL_CACHE_DIR%"
+if not "%CLI_TORCH_CHANNEL%"=="" set "TORCH_CHANNEL=%CLI_TORCH_CHANNEL%"
 if "%TORCH_CHANNEL%"=="" set "TORCH_CHANNEL=cu126"
+set "TORCH_MARKER_FILE=%VENV_DIR%\.torch_channel"
 
 rem Note: Do not force HF_HUB_OFFLINE here.
 rem Multiple model switching may require downloading a different model.
@@ -55,6 +77,12 @@ if not exist "%VENV_DIR%\Scripts\activate.bat" (
 
 rem --update flag: reinstall
 if /I "%~1"=="--update" goto :install_deps
+
+rem Reinstall when requested TORCH_CHANNEL differs from previous install.
+if exist "%TORCH_MARKER_FILE%" (
+    set /p INSTALLED_TORCH_CHANNEL=<"%TORCH_MARKER_FILE%"
+    if /I not "%INSTALLED_TORCH_CHANNEL%"=="%TORCH_CHANNEL%" goto :install_deps
+)
 
 rem Skip install if stamp file exists
 if exist "%STAMP_FILE%" goto :activate
@@ -93,6 +121,7 @@ if errorlevel 1 (
     echo [!] Dependency installation failed.
 ) else (
     break > "%STAMP_FILE%"
+    > "%TORCH_MARKER_FILE%" echo %TORCH_CHANNEL%
     echo [+] Dependencies installed successfully.
 )
 goto :start_server
@@ -113,3 +142,8 @@ echo [+] Starting server at http://%HOST%:%PORT%
 uvicorn app.main:app --host "%HOST%" --port "%PORT%"
 
 endlocal
+goto :eof
+
+:parse_arg
+if /I "%ARG:~0,16%"=="--torch-channel=" set "CLI_TORCH_CHANNEL=%ARG:~16%"
+exit /b 0

@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
-ENV_FILE="$SCRIPT_DIR/.env"
+ENV_FILE="$SCRIPT_DIR/env"
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON_BIN="python3"
@@ -22,18 +22,18 @@ else
 fi
 
 if [[ -f "$ENV_FILE" ]]; then
-  echo "[+] Loading .env from $ENV_FILE"
+  echo "[+] Loading env from $ENV_FILE"
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
 fi
 
-# Resolve model/cache dirs from .env when provided.
+# Resolve model/cache dirs from env when provided.
 MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${GLM_MODEL_CACHE:-$SCRIPT_DIR/models/hf_cache}}"
 HF_HOME_DIR="${HF_HOME:-$SCRIPT_DIR/models/hf_home}"
 
-# Make relative paths in .env behave consistently from project root.
+# Make relative paths in env behave consistently from project root.
 [[ "$MODEL_CACHE_DIR" != /* ]] && MODEL_CACHE_DIR="$SCRIPT_DIR/$MODEL_CACHE_DIR"
 [[ "$HF_HOME_DIR" != /* ]] && HF_HOME_DIR="$SCRIPT_DIR/$HF_HOME_DIR"
 

@@ -58,6 +58,33 @@ chmod +x run.sh
 
 環境変数 `GLM_MODEL_CACHE` で明示可能です。
 
+## RunPod Serverless
+
+Serverless 用の Dockerfile は `docker/Dockerfile` に置いています。
+
+### ビルド
+
+ビルドコンテキストはリポジトリルート (`.`) のままにしてください。
+
+```bash
+docker build -f docker/Dockerfile --build-arg TORCH_CHANNEL=cu126 -t bellk4/glm-ocr-runpod-test:20260306-2 .
+```
+
+### プッシュ
+
+```bash
+docker push bellk4/glm-ocr-runpod-test:20260306-2
+```
+
+### Endpoint 推奨環境変数
+
+```env
+GLM_MODEL_CACHE=/runpod-volume/hf_cache
+HF_HUB_CACHE=/runpod-volume/hf_cache
+TRANSFORMERS_CACHE=/runpod-volume/hf_cache
+HF_HOME=/runpod-volume/hf_home
+```
+
 ## API
 
 ### `GET /api/status`

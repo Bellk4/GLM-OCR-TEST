@@ -35,7 +35,8 @@ MODEL_CACHE_DIR = Path(
 
 def parse_model_ids() -> list[str]:
     raw = os.getenv("GLM_MODEL_IDS", "")
-    candidates = [item.strip() for item in re.split(r"[,;\n]", raw) if item.strip()]
+    candidates = [item.strip()
+                  for item in re.split(r"[,;\n]", raw) if item.strip()]
     ordered: list[str] = []
     for item in [MODEL_ID, *candidates]:
         if item not in ordered:
@@ -61,7 +62,8 @@ def _snapshot_has_model_files(snapshot_dir: Path) -> bool:
 
 
 def _has_valid_local_snapshot(model_id: str) -> bool:
-    snapshots_dir = MODEL_CACHE_DIR / ("models--" + model_id.replace("/", "--")) / "snapshots"
+    snapshots_dir = MODEL_CACHE_DIR / \
+        ("models--" + model_id.replace("/", "--")) / "snapshots"
     if not snapshots_dir.is_dir():
         return False
     for candidate in snapshots_dir.iterdir():
@@ -72,7 +74,6 @@ def _has_valid_local_snapshot(model_id: str) -> bool:
         ):
             return True
     return False
-
 
 
 def normalize_model_id(model_id: Optional[str]) -> str:
@@ -109,7 +110,8 @@ ALLOWED_LAYOUT_BACKENDS = {"ppdoclayoutv3", "none"}
 ALLOWED_READING_ORDERS = {"auto", "ltr_ttb", "rtl_ttb", "vertical_rl"}
 
 logger = logging.getLogger("glm_ocr_server")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 def patch_transformers_video_auto_none_bug() -> None:
@@ -129,7 +131,8 @@ def patch_transformers_video_auto_none_bug() -> None:
 
     video_processing_auto._glm_none_patch_applied = True
     if fixed:
-        logger.warning("Applied transformers video auto patch for %d entries", fixed)
+        logger.warning(
+            "Applied transformers video auto patch for %d entries", fixed)
 
 
 def resolve_model_path(model_id: str) -> tuple[str, bool]:
@@ -139,7 +142,8 @@ def resolve_model_path(model_id: str) -> tuple[str, bool]:
     snapshot directory path and True so callers can skip the Hub entirely.
     Otherwise return MODEL_ID and False so the Hub is used normally.
     """
-    snapshots_dir = MODEL_CACHE_DIR / ("models--" + model_id.replace("/", "--")) / "snapshots"
+    snapshots_dir = MODEL_CACHE_DIR / \
+        ("models--" + model_id.replace("/", "--")) / "snapshots"
     if snapshots_dir.is_dir():
         candidates = sorted(
             (
@@ -163,12 +167,14 @@ def resolve_device(device: str) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
     if requested == "cuda":
         if not torch.cuda.is_available():
-            logger.warning("CUDA requested but unavailable. Falling back to CPU.")
+            logger.warning(
+                "CUDA requested but unavailable. Falling back to CPU.")
             return "cpu"
         return "cuda"
     if requested == "cpu":
         return requested
-    raise HTTPException(status_code=400, detail=f"Unsupported device: {device}")
+    raise HTTPException(
+        status_code=400, detail=f"Unsupported device: {device}")
 
 
 class GlmRuntime:
@@ -267,7 +273,8 @@ class GlmRuntime:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-            logger.info("Loading model: %s (device=%s)", selected_model_id, device)
+            logger.info("Loading model: %s (device=%s)",
+                        selected_model_id, device)
             self.model = await asyncio.to_thread(self._load_model, device, selected_model_id)
             self.current_device = device
             self.current_model_id = selected_model_id
@@ -347,7 +354,8 @@ def build_prompt(task: str, schema: Optional[str], instruction: Optional[str] = 
         # Align with the prompt style in the official model card.
         base_prompt = f"画像内の情報を以下のJSON形式に従って出力してください。\n{schema}"
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported task: {task}")
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported task: {task}")
 
     extra = (instruction or "").strip()
     if not extra:
@@ -511,8 +519,10 @@ def resolve_effective_reading_order(
 
     widths = [max(1, b.bbox[2] - b.bbox[0]) for b in blocks]
     heights = [max(1, b.bbox[3] - b.bbox[1]) for b in blocks]
-    tall_ratio = sum(1 for w, h in zip(widths, heights) if h > (w * 1.8)) / float(len(blocks))
-    narrow_ratio = sum(1 for w, h in zip(widths, heights) if w < (h * 0.65)) / float(len(blocks))
+    tall_ratio = sum(1 for w, h in zip(widths, heights)
+                     if h > (w * 1.8)) / float(len(blocks))
+    narrow_ratio = sum(1 for w, h in zip(widths, heights)
+                       if w < (h * 0.65)) / float(len(blocks))
 
     centers = sorted(((b.bbox[0] + b.bbox[2]) // 2) for b in blocks)
     x_diffs = [centers[i + 1] - centers[i] for i in range(len(centers) - 1)]
@@ -534,7 +544,8 @@ def sort_blocks_ltr_or_rtl(
 ) -> list[LayoutBlock]:
     if not blocks:
         return []
-    avg_h = sum(max(1, b.bbox[3] - b.bbox[1]) for b in blocks) / float(len(blocks))
+    avg_h = sum(max(1, b.bbox[3] - b.bbox[1])
+                for b in blocks) / float(len(blocks))
     row_tol = max(8.0, avg_h * 0.45)
 
     sorted_by_y = sorted(blocks, key=lambda b: (b.bbox[1], b.bbox[0]))
@@ -559,7 +570,8 @@ def sort_blocks_ltr_or_rtl(
 def sort_blocks_vertical_rl(blocks: list[LayoutBlock]) -> list[LayoutBlock]:
     if not blocks:
         return []
-    avg_w = sum(max(1, b.bbox[2] - b.bbox[0]) for b in blocks) / float(len(blocks))
+    avg_w = sum(max(1, b.bbox[2] - b.bbox[0])
+                for b in blocks) / float(len(blocks))
     col_tol = max(8.0, avg_w * 0.5)
 
     sorted_by_x = sorted(blocks, key=lambda b: b.bbox[0], reverse=True)
@@ -641,7 +653,8 @@ def build_layout_preview_base64(
         block_type = str(item.get("type") or "text")
         drawer.rectangle((x1, y1, x2, y2), outline="#2563eb", width=2)
         if block_id:
-            drawer.text((x1 + 2, y1 + 2), f"{block_id}:{block_type}", fill="#dc2626")
+            drawer.text((x1 + 2, y1 + 2),
+                        f"{block_id}:{block_type}", fill="#dc2626")
     buffer = io.BytesIO()
     preview.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -676,9 +689,11 @@ def glm_infer(
     ).to(model.device)
     inputs.pop("token_type_ids", None)
 
-    generation_args: dict[str, Any] = {"max_new_tokens": max(1, int(max_new_tokens))}
+    generation_args: dict[str, Any] = {
+        "max_new_tokens": max(1, int(max_new_tokens))}
     if temperature is not None and float(temperature) > 0:
-        generation_args.update({"do_sample": True, "temperature": float(temperature)})
+        generation_args.update(
+            {"do_sample": True, "temperature": float(temperature)})
     if request_id:
         generation_args["stopping_criteria"] = StoppingCriteriaList(
             [CancelStoppingCriteria(request_id)]
@@ -787,6 +802,7 @@ def request_cancel(request_id: str) -> dict[str, Any]:
         "message": "中断要求を受け付けました",
     }
 
+
 app = FastAPI(
     title="GLM-OCR Local Server",
     description="FastAPI server for local GLM-OCR inference",
@@ -882,7 +898,8 @@ async def analyze(
     normalized_model_id = normalize_model_id(model_id)
     if normalized_task not in ALLOWED_TASKS:
         set_progress(request_id, "error", f"Unsupported task: {task}", 0, 0)
-        raise HTTPException(status_code=400, detail=f"Unsupported task: {task}")
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported task: {task}")
     normalized_linebreak_mode = (linebreak_mode or "none").strip().lower()
     if normalized_linebreak_mode not in ALLOWED_LINEBREAK_MODES:
         set_progress(
@@ -895,7 +912,8 @@ async def analyze(
         raise HTTPException(
             status_code=400, detail=f"Unsupported linebreak_mode: {linebreak_mode}"
         )
-    normalized_layout_backend = (layout_backend or DEFAULT_LAYOUT_BACKEND).strip().lower()
+    normalized_layout_backend = (
+        layout_backend or DEFAULT_LAYOUT_BACKEND).strip().lower()
     if normalized_layout_backend not in ALLOWED_LAYOUT_BACKENDS:
         set_progress(
             request_id,
@@ -908,7 +926,8 @@ async def analyze(
             status_code=400,
             detail=f"Unsupported layout_backend: {layout_backend}",
         )
-    normalized_reading_order = (reading_order or DEFAULT_READING_ORDER).strip().lower()
+    normalized_reading_order = (
+        reading_order or DEFAULT_READING_ORDER).strip().lower()
     if normalized_reading_order not in ALLOWED_READING_ORDERS:
         set_progress(
             request_id,
@@ -923,9 +942,12 @@ async def analyze(
         )
 
     normalized_dpi = max(36, min(600, int(dpi or DEFAULT_DPI)))
-    normalized_max_new_tokens = max(1, min(32768, int(max_new_tokens or DEFAULT_MAX_NEW_TOKENS)))
-    normalized_region_padding = max(0, min(256, int(region_padding or DEFAULT_REGION_PADDING)))
-    normalized_max_regions = max(1, min(1000, int(max_regions or DEFAULT_MAX_REGIONS)))
+    normalized_max_new_tokens = max(
+        1, min(32768, int(max_new_tokens or DEFAULT_MAX_NEW_TOKENS)))
+    normalized_region_padding = max(
+        0, min(256, int(region_padding or DEFAULT_REGION_PADDING)))
+    normalized_max_regions = max(
+        1, min(1000, int(max_regions or DEFAULT_MAX_REGIONS)))
     normalized_region_parallelism = max(
         1,
         min(8, int(region_parallelism or DEFAULT_REGION_PARALLELISM)),
@@ -1084,21 +1106,26 @@ async def analyze(
             padded_blocks = [
                 LayoutBlock(
                     type=normalize_layout_label(block.type),
-                    bbox=clamp_bbox_with_padding(block.bbox, page, normalized_region_padding),
+                    bbox=clamp_bbox_with_padding(
+                        block.bbox, page, normalized_region_padding),
                     score=float(block.score),
                 )
                 for block in raw_layout_blocks
             ]
             if not padded_blocks:
                 width, height = page.size
-                padded_blocks = [LayoutBlock(type="text", bbox=(0, 0, width, height), score=1.0)]
+                padded_blocks = [LayoutBlock(
+                    type="text", bbox=(0, 0, width, height), score=1.0)]
 
-            effective_order = resolve_effective_reading_order(padded_blocks, normalized_reading_order)
-            ordered_blocks = sort_layout_blocks(padded_blocks, effective_order)[:normalized_max_regions]
+            effective_order = resolve_effective_reading_order(
+                padded_blocks, normalized_reading_order)
+            ordered_blocks = sort_layout_blocks(padded_blocks, effective_order)[
+                :normalized_max_regions]
             total_regions_for_page = len(ordered_blocks)
             if total_regions_for_page == 0:
                 width, height = page.size
-                ordered_blocks = [LayoutBlock(type="text", bbox=(0, 0, width, height), score=1.0)]
+                ordered_blocks = [LayoutBlock(
+                    type="text", bbox=(0, 0, width, height), score=1.0)]
                 total_regions_for_page = 1
 
             set_progress(
@@ -1166,7 +1193,8 @@ async def analyze(
                     crop_path.unlink(missing_ok=True)
                 return region_index, item
 
-            block_results: list[Optional[dict[str, Any]]] = [None] * total_regions_for_page
+            block_results: list[Optional[dict[str, Any]]] = [
+                None] * total_regions_for_page
             completed_regions = 0
             for start in range(0, total_regions_for_page, normalized_region_parallelism):
                 if is_cancel_requested(request_id):
@@ -1176,7 +1204,8 @@ async def analyze(
                         completed_regions,
                         total_regions_for_page,
                     )
-                batch = ordered_blocks[start : start + normalized_region_parallelism]
+                batch = ordered_blocks[start: start +
+                                       normalized_region_parallelism]
                 batch_jobs = [
                     infer_region(start + offset, block) for offset, block in enumerate(batch)
                 ]
@@ -1230,7 +1259,8 @@ async def analyze(
                     page_item["json"] = json.loads(combined_text)
                 except json.JSONDecodeError as exc:
                     page_item["error"] = (
-                        f"{page_item.get('error', '')}\nJSON parse failed: {exc.msg}".strip()
+                        f"{page_item.get('error', '')}\nJSON parse failed: {exc.msg}".strip(
+                        )
                     )
             results.append(page_item)
     except HTTPException:
