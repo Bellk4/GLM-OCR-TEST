@@ -58,31 +58,68 @@ chmod +x run.sh
 
 環境変数 `GLM_MODEL_CACHE` で明示可能です。
 
-## RunPod Serverless
+## RunPod Pod
 
-Serverless 用の Dockerfile は `docker/Dockerfile` に置いています。
+Pod 用の Dockerfile は `docker/Dockerfile` に置いています。
 
 ### ビルド
 
 ビルドコンテキストはリポジトリルート (`.`) のままにしてください。
 
 ```bash
-docker build -f docker/Dockerfile --build-arg TORCH_CHANNEL=cu126 -t bellk4/glm-ocr-runpod-test:20260306-2 .
+docker build -f docker/Dockerfile --build-arg TORCH_CHANNEL=cu126 -t bellk4/glm-ocr-pod:20260310-1 .
 ```
 
 ### プッシュ
 
 ```bash
-docker push bellk4/glm-ocr-runpod-test:20260306-2
+docker push bellk4/glm-ocr-pod:20260310-1
 ```
 
-### Endpoint 推奨環境変数
+### Pod 推奨環境変数
 
 ```env
 GLM_MODEL_CACHE=/runpod-volume/hf_cache
 HF_HUB_CACHE=/runpod-volume/hf_cache
 TRANSFORMERS_CACHE=/runpod-volume/hf_cache
 HF_HOME=/runpod-volume/hf_home
+HOST=0.0.0.0
+PORT=8000
+```
+
+### Pod 起動後の利用先
+
+- ブラウザUI: `http://<pod-ip>:8000/`
+- API Docs: `http://<pod-ip>:8000/docs`
+- 外部アプリ連携: `POST http://<pod-ip>:8000/api/analyze`
+
+### 外部アプリからのリクエスト例
+
+`curl`:
+
+```bash
+curl -X POST "http://<pod-ip>:8000/api/analyze" \
+  -F "file=@sample.pdf" \
+  -F "task=text" \
+  -F "device=auto"
+```
+
+Python:
+
+```python
+import requests
+
+url = "http://<pod-ip>:8000/api/analyze"
+with open("sample.pdf", "rb") as f:
+    resp = requests.post(
+        url,
+        files={"file": ("sample.pdf", f, "application/pdf")},
+        data={"task": "text", "device": "auto"},
+        timeout=600,
+    )
+
+resp.raise_for_status()
+print(resp.json())
 ```
 
 ## API
