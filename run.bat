@@ -2,35 +2,44 @@
 setlocal
 
 rem -----------------------------------------------------------------------------
-rem GLM-OCR local server launcher (Windows, venv)
-rem - Creates/uses .venv next to this script
-rem - Installs runtime deps on first run, skips on subsequent runs
-rem - Pass --update to force reinstall of all dependencies
-rem - Starts FastAPI on configured host/port
+rem GLM-OCR ローカルサーバー起動スクリプト (Windows, venv)
+rem - このスクリプトと同じ場所の .venv を作成/利用
+rem - 初回は実行時依存をインストールし、2回目以降はスキップ
+rem - --update を付けると依存関係を強制再インストール
+rem - 指定された host/port で FastAPI を起動
+rem
+rem CLIパラメータ:
+rem   --update                      依存関係を強制的に再インストール
+rem   --torch-channel=<channel>     PyTorchのインデックスチャネルを指定　（例: cpu, cu118, cu121, cu126）
+rem   --help                        ヘルプを表示して終了
 rem -----------------------------------------------------------------------------
 
+rem スクリプトのあるディレクトリを取得
 set "SCRIPT_DIR=%~dp0"
+
+rem バックスラッシュで終わるパスを正規化する (例: C:\path\to\project\ -> C:\path\to\project)
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
-set "VENV_DIR=%SCRIPT_DIR%\.venv"
+
+rem 例: O:\source\Python\GLM-OCR-TEST\run.bat -> O:\source\Python\GLM-OCR-TEST
+set "VENV_DIR=%SCRIPT_DIR%\.venv"\
+
+rem 依存関係インストールのスタンプファイル
 set "STAMP_FILE=%VENV_DIR%\.deps_ok"
-set "ENV_FILE_DOT=%SCRIPT_DIR%\.env"
-set "ENV_FILE_PLAIN=%SCRIPT_DIR%\env"
 
-rem Allow explicit env file path override via ENV_FILE.
-if "%ENV_FILE%"=="" (
-    if exist "%ENV_FILE_PLAIN%" (
-        set "ENV_FILE=%ENV_FILE_PLAIN%"
-    ) else if exist "%ENV_FILE_DOT%" (
-        set "ENV_FILE=%ENV_FILE_DOT%"
-    )
-)
+rem 既定ではプロジェクトルートの env または .env を探す。
+set "ENV_FILE=%SCRIPT_DIR%\.env" 
 
-rem Optional argument: --torch-channel=<cpu|cu118|cu121|cu126...>
+rem 任意引数: --torch-channel=<cpu|cu118|cu121|cu126...>
 set "CLI_TORCH_CHANNEL="
+set "CLI_FORCE_UPDATE=0"
+set "CLI_SHOW_HELP=0"
 for %%I in (%*) do (
     set "ARG=%%~I"
     call :parse_arg
 )
+
+rem ヘルプ表示
+if "%CLI_SHOW_HELP%"=="1" goto :print_help
 
 if not "%ENV_FILE%"=="" if exist "%ENV_FILE%" (
     echo [+] Loading env from "%ENV_FILE%"
@@ -44,11 +53,11 @@ if "%ENV_FILE%"=="" (
     echo [!] No env file found. Expected "%ENV_FILE_PLAIN%" or "%ENV_FILE_DOT%".
 )
 
-rem Resolve model/cache directory from env when provided.
+rem envで指定されている場合は、モデル/キャッシュディレクトリをそこから解決する。
 if "%MODEL_CACHE_DIR%"=="" if not "%GLM_MODEL_CACHE%"=="" set "MODEL_CACHE_DIR=%GLM_MODEL_CACHE%"
 if "%MODEL_CACHE_DIR%"=="" set "MODEL_CACHE_DIR=%SCRIPT_DIR%\models\hf_cache"
 
-rem Make relative paths in env behave consistently from project root.
+rem env 内の相対パスをプロジェクトルート基準に正規化する。
 if not "%MODEL_CACHE_DIR:~1,1%"==":" if not "%MODEL_CACHE_DIR:~0,2%"=="\\" if not "%MODEL_CACHE_DIR:~0,1%"=="/" set "MODEL_CACHE_DIR=%SCRIPT_DIR%\%MODEL_CACHE_DIR%"
 
 if not exist "%MODEL_CACHE_DIR%" mkdir "%MODEL_CACHE_DIR%"
@@ -61,10 +70,10 @@ if not "%CLI_TORCH_CHANNEL%"=="" set "TORCH_CHANNEL=%CLI_TORCH_CHANNEL%"
 if "%TORCH_CHANNEL%"=="" set "TORCH_CHANNEL=cu126"
 set "TORCH_MARKER_FILE=%VENV_DIR%\.torch_channel"
 
-rem Note: Do not force HF_HUB_OFFLINE here.
-rem Multiple model switching may require downloading a different model.
+rem 注意: ここで HF_HUB_OFFLINE を強制しない。
+rem 複数モデル切り替え時に別モデルのダウンロードが必要になる可能性がある。
 
-rem Create venv if missing
+rem 仮想環境がなければ作成する。
 if not exist "%VENV_DIR%\Scripts\activate.bat" (
     echo [+] Creating virtual environment at "%VENV_DIR%" ...
     python -m venv "%VENV_DIR%"
@@ -75,16 +84,16 @@ if not exist "%VENV_DIR%\Scripts\activate.bat" (
     goto :install_deps
 )
 
-rem --update flag: reinstall
-if /I "%~1"=="--update" goto :install_deps
+rem --update が指定されていれば再インストールする。
+if "%CLI_FORCE_UPDATE%"=="1" goto :install_deps
 
-rem Reinstall when requested TORCH_CHANNEL differs from previous install.
+rem 前回インストール時の TORCH_CHANNEL と異なる場合は再インストールする。
 if exist "%TORCH_MARKER_FILE%" (
     set /p INSTALLED_TORCH_CHANNEL=<"%TORCH_MARKER_FILE%"
     if /I not "%INSTALLED_TORCH_CHANNEL%"=="%TORCH_CHANNEL%" goto :install_deps
 )
 
-rem Skip install if stamp file exists
+rem スタンプファイルがある場合はインストールをスキップする。
 if exist "%STAMP_FILE%" goto :activate
 goto :install_deps
 
@@ -99,6 +108,9 @@ echo [+] Installing/ensuring dependencies...
 python -m pip install --upgrade pip
 
 echo [+] Installing PyTorch (%TORCH_CHANNEL%)...
+
+rem CPU版は専用のインデックスURLからインストールする必要がある。
+rem GPU版はチャネルに応じたURLからインストールする。例: cu118 -> https://download.pytorch.org/whl/cu118
 if /I "%TORCH_CHANNEL%"=="cpu" (
     python -m pip install --upgrade --index-url https://download.pytorch.org/whl/cpu torch torchvision
 ) else (
@@ -116,7 +128,9 @@ python -m pip install --upgrade paddleocr
 if errorlevel 1 echo [!] paddleocr install failed. Layout OCR will use fallback mode.
 
 echo [+] Installing transformers (development build)...
-python -m pip install git+https://github.com/huggingface/transformers.git
+@REM python -m pip install git+https://github.com/huggingface/transformers.git
+python -m pip install transformers
+
 if errorlevel 1 (
     echo [!] Dependency installation failed.
 ) else (
@@ -146,4 +160,30 @@ goto :eof
 
 :parse_arg
 if /I "%ARG:~0,16%"=="--torch-channel=" set "CLI_TORCH_CHANNEL=%ARG:~16%"
+if /I "%ARG%"=="--update" set "CLI_FORCE_UPDATE=1"
+if /I "%ARG%"=="--help" set "CLI_SHOW_HELP=1"
+exit /b 0
+
+:print_help
+echo 使い方: run.bat [オプション]
+echo.
+echo オプション:
+echo   --update
+echo     .venv が準備済みでも依存関係を強制的に再インストールします。
+echo.
+echo   --torch-channel=^<channel^>
+echo     PyTorch wheel のチャネルを指定します。
+echo     例: cpu, cu118, cu121, cu126
+echo.
+echo   --help
+echo     このヘルプを表示して終了します。
+echo.
+echo 主な環境変数:
+echo   ENV_FILE          明示的に env ファイルのパスを指定します。未指定時はプロジェクト直下の ^"env^" または ^".env^" を利用します。
+echo   MODEL_CACHE_DIR   モデルキャッシュの保存先ディレクトリです。
+echo   GLM_MODEL_CACHE   MODEL_CACHE_DIR が空の場合の参照元エイリアスです。
+echo   TORCH_CHANNEL     --torch-channel 未指定時に使う既定チャネルです。
+echo   HOST              Uvicorn のホストです。既定: 0.0.0.0
+echo   PORT              Uvicorn のポートです。既定: 8000
+endlocal
 exit /b 0

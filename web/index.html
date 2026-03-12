@@ -112,8 +112,8 @@
 
 			.panel {
 				background: var(--panel);
-				backdrop-filter: blur(16px) saturate(160%);
 				-webkit-backdrop-filter: blur(16px) saturate(160%);
+				backdrop-filter: blur(16px) saturate(160%);
 				border: 1px solid var(--line);
 				border-radius: var(--r-card);
 				box-shadow: var(--shadow-panel);
@@ -203,8 +203,15 @@
 				letter-spacing: 0.06em;
 				text-transform: uppercase;
 				color: var(--muted);
+				-webkit-user-select: none;
 				user-select: none;
 				transition: color 0.15s;
+			}
+
+			.status-tags {
+				display: flex;
+				gap: 8px;
+				flex-wrap: wrap;
 			}
 
 			.form-advanced > summary:hover { color: var(--ink); }
@@ -481,7 +488,7 @@
 				display: block;
 				font-size: 12px;
 				color: var(--muted);
-				min-width: fit-content;
+				min-width: -webkit-fill-available;
 			}
 
 			.page-picker select { max-width: 240px; }
@@ -587,7 +594,7 @@
 			<section class="panel">
 				<div class="header">
 					<h1>GLM-OCR Local Console</h1>
-					<div style="display: flex; gap: 8px; flex-wrap: wrap">
+					<div class="status-tags">
 						<span class="tag" id="statusModel">model: -</span>
 						<span class="tag" id="statusDevice">device: -</span>
 						<span class="tag" id="statusCuda">cuda: -</span>

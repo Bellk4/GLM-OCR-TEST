@@ -1,3 +1,4 @@
+# Must be at END of file to avoid circular imports
 import base64
 import asyncio
 import io
@@ -9,12 +10,11 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import torch
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw
 from transformers import (
@@ -89,10 +89,7 @@ def normalize_model_id(model_id: Optional[str]) -> str:
     return selected
 
 
-DEFAULT_INSTRUCTION = os.getenv(
-    "GLM_DEFAULT_INSTRUCTION",
-    "このPDFは機械設計図です。型番・部品名は半角カナを優先し、記号を保持して読み取ってください。",
-)
+DEFAULT_INSTRUCTION = "画像内のテキストを正確に認識してください。"
 
 
 DEFAULT_DPI = 220
@@ -126,10 +123,11 @@ def patch_transformers_video_auto_none_bug() -> None:
     fixed = 0
     for key, value in list(video_processing_auto.VIDEO_PROCESSOR_MAPPING_NAMES.items()):
         if value is None:
-            video_processing_auto.VIDEO_PROCESSOR_MAPPING_NAMES[key] = ""
+            cast(Any, video_processing_auto.VIDEO_PROCESSOR_MAPPING_NAMES)[
+                key] = ""
             fixed += 1
 
-    video_processing_auto._glm_none_patch_applied = True
+    setattr(video_processing_auto, "_glm_none_patch_applied", True)
     if fixed:
         logger.warning(
             "Applied transformers video auto patch for %d entries", fixed)
@@ -180,12 +178,12 @@ def resolve_device(device: str) -> str:
 class GlmRuntime:
     def __init__(self) -> None:
         self.processor: Optional[AutoProcessor] = None
-        self.model: Optional[AutoModelForImageTextToText] = None
+        self.model: Optional[Any] = None
         self.current_device: Optional[str] = None
         self.current_model_id: Optional[str] = None
         self._load_lock = asyncio.Lock()
 
-    def _load_model(self, device: str, model_id: str) -> AutoModelForImageTextToText:
+    def _load_model(self, device: str, model_id: str) -> Any:
         model_path, local = resolve_model_path(model_id)
         extra: dict[str, Any] = {"local_files_only": local}
         if not local:
@@ -210,7 +208,7 @@ class GlmRuntime:
                     device_map=None,
                     **extra,
                 )
-                return model.to("cuda")
+                return cast(Any, model).to("cuda")
 
         model = AutoModelForImageTextToText.from_pretrained(
             model_path,
@@ -218,7 +216,7 @@ class GlmRuntime:
             device_map=None,
             **extra,
         )
-        return model.to("cpu")
+        return cast(Any, model).to("cpu")
 
     async def ensure_loaded(self, device: str, model_id: Optional[str] = None) -> None:
         selected_model_id = normalize_model_id(model_id)
@@ -279,7 +277,7 @@ class GlmRuntime:
             self.current_device = device
             self.current_model_id = selected_model_id
 
-    def get(self) -> tuple[AutoProcessor, AutoModelForImageTextToText, str]:
+    def get(self) -> tuple[AutoProcessor, Any, str]:
         if self.processor is None or self.model is None or self.current_device is None:
             raise RuntimeError("GLM runtime is not initialized")
         return self.processor, self.model, self.current_device
@@ -301,7 +299,7 @@ def load_pages(path: Path, dpi: int) -> list[Image.Image]:
         try:
             for page_index in range(len(doc)):
                 page = doc[page_index]
-                bitmap = page.render(scale=scale)
+                bitmap = cast(Any, page).render(scale=scale)
                 try:
                     image = bitmap.to_pil().convert("RGB")
                 finally:
@@ -361,6 +359,13 @@ def build_prompt(task: str, schema: Optional[str], instruction: Optional[str] = 
     if not extra:
         return base_prompt
     return f"{base_prompt}\n\nAdditional instruction:\n{extra}"
+
+
+def build_effective_instruction(instruction: Optional[str]) -> str:
+    extra = (instruction or "").strip()
+    if not extra:
+        return DEFAULT_INSTRUCTION
+    return f"{DEFAULT_INSTRUCTION}\n{extra}"
 
 
 def is_cjk_char(ch: str) -> bool:
@@ -426,10 +431,10 @@ def normalize_linebreaks(text: str, mode: str) -> str:
         non_empty = [line.strip() for line in lines if line.strip()]
         if not non_empty:
             return ""
-        merged = non_empty[0]
+        compact_text = non_empty[0]
         for line in non_empty[1:]:
-            merged = join_soft_wrapped_line(merged, line)
-        return merged.strip()
+            compact_text = join_soft_wrapped_line(compact_text, line)
+        return compact_text.strip()
 
     raise HTTPException(
         status_code=400,
@@ -466,10 +471,23 @@ def normalize_textcircled_notation(text: str) -> str:
     return text
 
 
+def normalize_jp_postal_mark(text: str) -> str:
+    if not text:
+        return text
+
+    # OCR sometimes confuses Japanese postal mark "〒" as "卍".
+    # Apply a conservative fix only when it is immediately followed by
+    # a postal-code like pattern: 123-4567 (half/full-width digits allowed).
+    postal_code_core = r"[0-9０-９]{3}\s*[-ー−‐‑–―]\s*[0-9０-９]{4}"
+    pattern = rf"(^|\n)([ \t]*)卍([ \t]*)(?={postal_code_core})"
+    return re.sub(pattern, r"\1\2〒\3", text)
+
+
 def normalize_text_output(text: str, task: str, linebreak_mode: str) -> str:
     normalized = text
     if task in {"text", "table"}:
         normalized = normalize_textcircled_notation(normalized)
+        normalized = normalize_jp_postal_mark(normalized)
     return normalize_linebreaks(normalized, linebreak_mode)
 
 
@@ -663,7 +681,7 @@ def build_layout_preview_base64(
 
 def glm_infer(
     processor: AutoProcessor,
-    model: AutoModelForImageTextToText,
+    model: Any,
     image_path: str,
     prompt: str,
     max_new_tokens: int,
@@ -680,13 +698,13 @@ def glm_infer(
         }
     ]
 
-    inputs = processor.apply_chat_template(
+    inputs = cast(Any, processor).apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
-    ).to(model.device)
+    ).to(cast(Any, model).device)
     inputs.pop("token_type_ids", None)
 
     generation_args: dict[str, Any] = {
@@ -700,12 +718,14 @@ def glm_infer(
         )
 
     with torch.inference_mode():
-        generated = model.generate(**inputs, **generation_args)
+        generated = cast(Any, model).generate(**inputs, **generation_args)
     input_len = inputs["input_ids"].shape[1]
     output = generated[0][input_len:]
     output_len = int(output.shape[0])
-    raw_text = processor.decode(output, skip_special_tokens=False).strip()
-    clean_text = processor.decode(output, skip_special_tokens=True).strip()
+    raw_text = cast(Any, processor).decode(
+        output, skip_special_tokens=False).strip()
+    clean_text = cast(Any, processor).decode(
+        output, skip_special_tokens=True).strip()
     truncated = output_len >= max(1, int(max_new_tokens))
     return raw_text, clean_text, truncated
 
@@ -817,8 +837,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-static_dir = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+static_dir = ROOT_DIR / "web"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.on_event("startup")
@@ -833,18 +854,6 @@ async def startup_load_model() -> None:
     )
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> HTMLResponse:
-    html_path = static_dir / "index.html"
-    if not html_path.exists():
-        raise HTTPException(
-            status_code=500,
-            detail="UI not found. Ensure app/static/index.html exists.",
-        )
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
-
-
-@app.get("/api/status")
 async def status() -> dict[str, Any]:
     return {
         "cuda_available": torch.cuda.is_available(),
@@ -856,7 +865,6 @@ async def status() -> dict[str, Any]:
     }
 
 
-@app.get("/api/progress/{request_id}")
 async def progress(request_id: str) -> dict[str, Any]:
     item = PROGRESS_STATE.get(request_id)
     if item is None:
@@ -864,12 +872,10 @@ async def progress(request_id: str) -> dict[str, Any]:
     return item
 
 
-@app.post("/api/cancel/{request_id}")
 async def cancel(request_id: str) -> dict[str, Any]:
     return request_cancel(request_id)
 
 
-@app.post("/api/analyze")
 async def analyze(
     file: UploadFile = File(...),
     device: str = Form("auto"),
@@ -894,7 +900,7 @@ async def analyze(
     set_progress(request_id, "preprocessing", "事前処理中", 0, 0)
 
     normalized_task = (task or "text").strip().lower()
-    effective_instruction = (instruction or "").strip() or DEFAULT_INSTRUCTION
+    effective_instruction = build_effective_instruction(instruction)
     normalized_model_id = normalize_model_id(model_id)
     if normalized_task not in ALLOWED_TASKS:
         set_progress(request_id, "error", f"Unsupported task: {task}", 0, 0)
@@ -1277,3 +1283,11 @@ async def analyze(
     clear_cancel_request(request_id)
 
     return build_response("done", results)
+
+
+# isort: skip
+from web.routes import router as web_router  # noqa: E402, F401
+from api.routes import router as api_router  # noqa: E402, F401
+
+app.include_router(web_router)
+app.include_router(api_router)

@@ -9,3 +9,4 @@ __pycache__
 models/hf_cache
 models/hf_home
 image.jpg
+handler.py

@@ -5,7 +5,6 @@ pillow
 pypdfium2
 accelerate
 numpy
-runpod
 # Optional layout OCR dependencies
 paddlepaddle
 paddleocr
